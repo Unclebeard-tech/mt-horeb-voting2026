@@ -1,4 +1,3 @@
-
 import { useState, useEffect, useRef } from 'react'
 import { initializeApp } from 'firebase/app'
 import { getFirestore, doc, getDoc, setDoc, collection, getDocs, deleteDoc, addDoc, updateDoc } from 'firebase/firestore'
@@ -15,7 +14,6 @@ const firebaseConfig = {
 const app = initializeApp(firebaseConfig)
 const db = getFirestore(app)
 const ADMIN_PASSWORD = "horeb2026"
-const VOTING_START_HOUR = 16 // 4PM
 
 export default function App() {
   const [studentId, setStudentId] = useState("")
@@ -30,14 +28,16 @@ export default function App() {
   const [candidates, setCandidates] = useState(STATIC_CANDIDATES)
   const [newCand, setNewCand] = useState({ name:"", position:"", photo:"" })
   const [editId, setEditId] = useState(null)
-  const [now, setNow] = useState(new Date())
   const timerRef = useRef(null)
 
   const positions = [...new Set(candidates.map(c => c.position))]
-  const votingOpen = now.getHours() >= VOTING_START_HOUR
 
-  useEffect(()=>{ const i=setInterval(()=>setNow(new Date()), 1000); return ()=>clearInterval(i) },[])
-  useEffect(()=>{ (async()=>{ const snap = await getDocs(collection(db,'horeb_candidates')); if(!snap.empty) setCandidates(snap.docs.map(d=>({firebaseId:d.id,...d.data()}))) })() },[])
+  useEffect(()=>{
+    (async()=>{
+      const snap = await getDocs(collection(db,'horeb_config_candidates'))
+      if(!snap.empty) setCandidates(snap.docs.map(d=>({firebaseId:d.id,...d.data()})))
+    })()
+  },[])
 
   const resetTimer = () => {
     if (timerRef.current) clearTimeout(timerRef.current)
@@ -50,14 +50,14 @@ export default function App() {
     const id = studentId.trim().padStart(3,'0')
     setLoading(true)
     const sSnap = await getDoc(doc(db,'horeb_students',id))
-    if(!sSnap.exists()){ setMessage("Invalid Code"); setLoading(false); return }
+    if(!sSnap.exists()){ setMessage("Invalid Horeb ID - Use 001-300"); setLoading(false); return }
     const vSnap = await getDoc(doc(db,'horeb_votes',id))
     if(vSnap.exists()){ setMessage("Already voted"); setLoading(false); return }
     setStudentId(id); setLoggedIn(true); setLoading(false)
   }
 
   const handleSubmitAll = async () => {
-    if(Object.keys(selections).length!== positions.length){ alert(`Vote for all ${positions.length} positions`); return }
+    if(Object.keys(selections).length!== positions.length){ alert("Vote for all positions"); return }
     setLoading(true)
     await setDoc(doc(db,'horeb_votes',studentId), { studentId, votes: selections, votedAt: new Date().toISOString() })
     setVoted(true); setTimeout(()=>handleLogout(), 3000); setLoading(false)
@@ -68,102 +68,60 @@ export default function App() {
     setLoading(true)
     const votesSnap = await getDocs(collection(db,'horeb_votes'))
     setVotesData(votesSnap.docs.map(d=>d.data()))
-    const candSnap = await getDocs(collection(db,'horeb_candidates'))
+    const candSnap = await getDocs(collection(db,'horeb_config_candidates'))
     if(!candSnap.empty) setCandidates(candSnap.docs.map(d=>({firebaseId:d.id,...d.data()})))
     else {
-      for(let c of STATIC_CANDIDATES){ await addDoc(collection(db,'horeb_candidates'), c) }
-      const newSnap = await getDocs(collection(db,'horeb_candidates'))
+      for(let c of STATIC_CANDIDATES){ await addDoc(collection(db,'horeb_config_candidates'), c) }
+      const newSnap = await getDocs(collection(db,'horeb_config_candidates'))
       setCandidates(newSnap.docs.map(d=>({firebaseId:d.id,...d.data()})))
     }
     setShowAdmin(true); setLoading(false)
   }
 
   const handleAddCandidate = async () => {
-    if(!newCand.name ||!newCand.position ||!newCand.photo){ alert("Fill all"); return }
+    if(!newCand.name ||!newCand.position ||!newCand.photo){ alert("Fill all fields"); return }
     setLoading(true)
-    if(editId){ await updateDoc(doc(db,'horeb_candidates',editId), newCand); setEditId(null) }
-    else { const id = `${newCand.position.toLowerCase().replace(/\s+/g,'-')}-${Date.now()}`; await addDoc(collection(db,'horeb_candidates'), { id,...newCand }) }
-    const snap = await getDocs(collection(db,'horeb_candidates'))
+    if(editId){ await updateDoc(doc(db,'horeb_config_candidates',editId), newCand); setEditId(null) }
+    else { const id = `${newCand.position.toLowerCase().replace(/\s+/g,'-')}-${Date.now()}`; await addDoc(collection(db,'horeb_config_candidates'), { id,...newCand }) }
+    const snap = await getDocs(collection(db,'horeb_config_candidates'))
     setCandidates(snap.docs.map(d=>({firebaseId:d.id,...d.data()})))
     setNewCand({ name:"", position:"", photo:"" }); setLoading(false)
   }
   const handleEdit = (c) => { setNewCand({ name:c.name, position:c.position, photo:c.photo }); setEditId(c.firebaseId); window.scrollTo(0,0) }
-  const handleDelete = async (fid) => { if(!confirm("Delete?")) return; await deleteDoc(doc(db,'horeb_candidates',fid)); setCandidates(candidates.filter(c=>c.firebaseId!==fid)) }
+  const handleDelete = async (fid) => { if(!confirm("Delete candidate?")) return; await deleteDoc(doc(db,'horeb_config_candidates',fid)); setCandidates(candidates.filter(c=>c.firebaseId!==fid)) }
   const resetAllVotes = async () => {
-    if(!confirm("RESET ALL VOTES?")) return
+    if(!confirm("RESET ALL HOREB VOTES?")) return
     setLoading(true)
     const snap = await getDocs(collection(db,'horeb_votes'))
     for(let d of snap.docs){ await deleteDoc(d.ref) }
-    setVotesData([]); alert("Votes reset"); setLoading(false)
+    setVotesData([]); alert("All Horeb votes reset"); setLoading(false)
   }
   const handleLogout = () => { setLoggedIn(false); setStudentId(""); setSelections({}); setVoted(false); setMessage(""); setShowAdmin(false); setAdminPass(""); if(timerRef.current) clearTimeout(timerRef.current) }
   const getCount = (pos, candId) => votesData.filter(v=>v.votes[pos]===candId).length
 
-  if(!votingOpen && !showAdmin){
-    const diff = (VOTING_START_HOUR*3600 - (now.getHours()*3600+now.getMinutes()*60+now.getSeconds()))
-    const h = Math.floor(diff/3600); const m = Math.floor((diff%3600)/60); const s = diff%60
-    return (
-      <div style={{maxWidth:600, margin:'80px auto', padding:30, textAlign:'center', fontFamily:'sans-serif'}}>
-        <h1>MT. Horeb Elections 2026</h1>
-        <h2 style={{color:'#0d5c5c'}}>Voting opens at 4:00 PM</h2>
-        <div style={{fontSize:48, fontWeight:'bold', margin:'20px 0'}}>{h<0? '00':String(h).padStart(2,'0')}:{String(m).padStart(2,'0')}:{String(s).padStart(2,'0')}</div>
-        <p>Please wait, voting is locked until 4PM</p>
-        <div style={{marginTop:60, borderTop:'1px solid #eee', paddingTop:20}}>
-          <details><summary style={{cursor:'pointer', color:'#666'}}>Admin Access</summary>
-            <input type="password" value={adminPass} onChange={e=>setAdminPass(e.target.value)} placeholder="Password" style={{padding:10, width:'100%', marginTop:10}}/>
-            <button onClick={loadResults} style={{marginTop:10, padding:10, width:'100%', background:'#0d5c5c', color:'#fff'}}>Access</button>
-          </details>
-        </div>
-      </div>
-    )
-  }
-
   if(showAdmin) return (
     <div style={{maxWidth:1200, margin:'20px auto', padding:20, fontFamily:'sans-serif', background:'#f8f9fa', minHeight:'100vh'}}>
       <div style={{display:'flex', justifyContent:'space-between', alignItems:'center', background:'#fff', padding:15, borderRadius:10}}>
-        <h1 style={{margin:0}}>MT. Horeb - Admin Dashboard</h1>
+        <h1 style={{margin:0}}>Mt Horeb - Admin</h1>
         <div><span style={{marginRight:15}}><b>{votesData.length}</b> voted</span><button onClick={handleLogout}>Exit</button></div>
       </div>
-      <div style={{display:'grid', gridTemplateColumns:'1fr 1fr', gap:15, marginTop:20}}>
-        <div style={{background:'#fff', padding:15, borderRadius:10}}><h3>Manage Votes</h3><p>Total: <b>{votesData.length}</b></p><button onClick={resetAllVotes} style={{background:'#dc3545', color:'#fff', padding:'12px', width:'100%', border:'none', borderRadius:8, fontWeight:'bold'}}>🗑️ RESET ALL VOTES</button></div>
-        <div style={{background:'#fff', padding:15, borderRadius:10}}>
-          <h3>{editId? "Edit Candidate" : "Add Candidate"}</h3>
-          <input value={newCand.name} onChange={e=>setNewCand({...newCand, name:e.target.value.toUpperCase()})} placeholder="Full Name" style={{padding:10, width:'100%', marginBottom:8, borderRadius:6, border:'1px solid #ddd'}}/>
-          <input value={newCand.position} onChange={e=>setNewCand({...newCand, position:e.target.value.toUpperCase()})} placeholder="Position" style={{padding:10, width:'100%', marginBottom:8, borderRadius:6, border:'1px solid #ddd'}}/>
-          <input value={newCand.photo} onChange={e=>setNewCand({...newCand, photo:e.target.value})} placeholder="/images/candidates/name.jpg" style={{padding:10, width:'100%', marginBottom:8, borderRadius:6, border:'1px solid #ddd'}}/>
-          <button onClick={handleAddCandidate} style={{background:'#0d5c5c', color:'#fff', padding:12, width:'100%', border:'none', borderRadius:8}}>{editId? "Update" : "Add"}</button>
-          {editId && <button onClick={()=>{setEditId(null); setNewCand({name:"", position:"", photo:""})}} style={{marginTop:5, width:'100%', padding:8}}>Cancel</button>}
-        </div>
-      </div>
+      <div style={{marginTop:15, background:'#fff', padding:15, borderRadius:10}}><button onClick={resetAllVotes} style={{background:'#dc3545', color:'#fff', padding:'12px', width:'100%', border:'none', borderRadius:8, fontWeight:'bold'}}>🗑 RESET HOREB VOTES</button></div>
       {positions.map(pos=>{
-        const maxVotes = Math.max(...candidates.filter(c=>c.position===pos).map(c=>getCount(pos,c.id)),1)
+        const total = votesData.length
+        const max = Math.max(...candidates.filter(c=>c.position===pos).map(c=>getCount(pos,c.id)),1)
         return (
-        <div key={pos} style={{marginTop:25, background:'#fff', padding:20, borderRadius:12}}>
-          <h2 style={{background:'#0d5c5c', color:'#fff', padding:12, borderRadius:8, marginTop:0}}>{pos}</h2>
-          <div style={{display:'flex', flexDirection:'column', gap:15}}>
-            {candidates.filter(c=>c.position===pos).map(c=>{
-              const count = getCount(pos, c.id)
-              const percent = votesData.length? ((count/votesData.length)*100).toFixed(1) : 0
-              const barWidth = (count/maxVotes)*100
-              return (
-                <div key={c.firebaseId || c.id} style={{display:'flex', alignItems:'center', gap:12, padding:12, border:'1px solid #eee', borderRadius:10}}>
-                  <img src={c.photo} style={{width:65, height:65, objectFit:'cover', borderRadius:50, border:'2px solid #0d5c5c'}} alt=""/>
-                  <div style={{flex:1}}>
-                    <div style={{display:'flex', justifyContent:'space-between'}}><b>{c.name}</b><span><b>{count}</b> votes • {percent}%</span></div>
-                    <div style={{background:'#e9ecef', height:22, borderRadius:20, marginTop:8, overflow:'hidden'}}>
-                      <div style={{background: count===maxVotes && count>0? '#0d5c5c' : '#6bb6b6', width:`${barWidth}%`, height:'100%', borderRadius:20, transition:'width 0.8s ease', display:'flex', alignItems:'center', justifyContent:'flex-end', paddingRight:8, color:'#fff', fontWeight:'bold', fontSize:12}}>
-                        {count>0 && `${percent}%`}
-                      </div>
-                    </div>
-                  </div>
-                  <div style={{display:'flex', flexDirection:'column', gap:5}}>
-                    <button onClick={()=>handleEdit(c)} style={{padding:'6px 10px', borderRadius:6, border:'1px solid #ddd'}}>Edit</button>
-                    <button onClick={()=>handleDelete(c.firebaseId)} style={{padding:'6px 10px', background:'#ff4444', color:'#fff', border:'none', borderRadius:6}}>Del</button>
-                  </div>
-                </div>
-              )
-            })}
-          </div>
+        <div key={pos} style={{marginTop:20, background:'#fff', padding:20, borderRadius:12}}>
+          <h2 style={{background:'#0d5c5c', color:'#fff', padding:10, borderRadius:8}}>{pos}</h2>
+          {candidates.filter(c=>c.position===pos).map(c=>{
+            const cnt = getCount(pos,c.id)
+            const pct = total? ((cnt/total)*100).toFixed(1):0
+            return (
+              <div key={c.firebaseId||c.id} style={{display:'flex', alignItems:'center', gap:12, padding:12, border:'1px solid #eee', borderRadius:10, marginTop:10}}>
+                <img src={c.photo} style={{width:60,height:60,borderRadius:50}} alt=""/>
+                <div style={{flex:1}}><b>{c.name}</b> - {cnt} votes ({pct}%)<div style={{background:'#eee',height:18,borderRadius:10,marginTop:5}}><div style={{background:'#0d5c5c',width:`${(cnt/max)*100}%`,height:'100%',borderRadius:10}}></div></div></div>
+              </div>
+            )
+          })}
         </div>
       )})}
     </div>
@@ -171,40 +129,41 @@ export default function App() {
 
   if(!loggedIn) return (
     <div style={{maxWidth:400, margin:'50px auto', padding:20, textAlign:'center', fontFamily:'sans-serif'}}>
-      <h1>MT. Horeb Voting 2026</h1>
-      <p style={{color:'green'}}>Voting OPEN - Closes Today</p>
+      <h1>Mt Horeb Voting 2026/27</h1>
       <form onSubmit={handleLogin}>
-        <input value={studentId} onChange={e=>setStudentId(e.target.value)} placeholder="Unique Voting Code" style={{padding:12, width:'100%', fontSize:18, textAlign:'center'}}/>
-        <button disabled={loading} style={{marginTop:10, padding:12, width:'100%', background:'#000', color:'#fff'}}>{loading?'Verifying...':'Login'}</button>
+        <input value={studentId} onChange={e=>setStudentId(e.target.value)} placeholder="Horeb ID (001-300)" style={{padding:12, width:'100%', fontSize:18, textAlign:'center'}}/>
+        <button disabled={loading} style={{marginTop:10, padding:12, width:'100%', background:'#0d5c5c', color:'#fff'}}>{loading?'Verifying...':'Login'}</button>
       </form>
       {message && <p style={{color:'red'}}>{message}</p>}
       <div style={{marginTop:60, borderTop:'1px solid #eee', paddingTop:20}}>
-        <details><summary style={{cursor:'pointer', color:'#666'}}>Admin Access</summary>
+        <details><summary>Admin Access</summary>
           <input type="password" value={adminPass} onChange={e=>setAdminPass(e.target.value)} placeholder="Password" style={{padding:10, width:'100%', marginTop:10}}/>
-          <button onClick={loadResults} style={{marginTop:10, padding:10, width:'100%', background:'#0d5c5c', color:'#fff'}}>Access</button>
+          <button onClick={loadResults} style={{marginTop:10, padding:10, width:'100%', background:'#0d5c5c', color:'#fff'}}>Access Dashboard</button>
         </details>
       </div>
     </div>
   )
-  if(voted) return <div style={{textAlign:'center', marginTop:100, fontFamily:'sans-serif'}}><h1>✅ Vote Recorded!</h1><p>Thank you - God Bless Mt. Horeb!</p></div>
+  if(voted) return <div style={{textAlign:'center', marginTop:100}}><h1>✅ Vote Recorded!</h1><p>Thank you - Mt Horeb</p></div>
 
   return (
-    <div style={{maxWidth:1000, margin:'20px auto', padding:20, fontFamily:'sans-serif'}}>
-      <div style={{display:'flex', justifyContent:'space-between'}}><h2>Voter: {studentId}</h2><button onClick={handleLogout}>Logout</button></div>
+    <div style={{maxWidth:800, margin:'20px auto', padding:20, fontFamily:'sans-serif'}}>
+      <div style={{display:'flex', justifyContent:'space-between'}}><h2>Voter: {studentId} (Horeb)</h2><button onClick={handleLogout}>Logout</button></div>
       {positions.map(pos => (
-        <div key={pos} style={{marginTop:30}}>
-          <h3 style={{background:'#0d5c5c', color:'#fff', padding:10, borderRadius:8}}>{pos}</h3>
-          <div style={{display:'grid', gridTemplateColumns:'repeat(auto-fit, minmax(180px,1fr))', gap:15}}>
+        <div key={pos} style={{marginTop:30, background:'#fff', padding:20, borderRadius:12, boxShadow:'0 2px 8px rgba(0,0,0,0.08)'}}>
+          <h3 style={{background:'#0d5c5c', color:'#fff', padding:10, borderRadius:8, marginTop:0}}>{pos}</h3>
+          <div style={{display:'flex', flexDirection:'column', gap:12, marginTop:15}}>
             {candidates.filter(c=>c.position===pos).map(c=>(
-              <div key={c.id} onClick={()=>setSelections({...selections, [pos]:c.id})} style={{border: selections[pos]===c.id? '3px solid #0d5c5c':'1px solid #ddd', padding:10, borderRadius:10, cursor:'pointer', textAlign:'center', background: selections[pos]===c.id? '#f0ffff':'#fff'}}>
-                <img src={c.photo} alt={c.name} style={{width:'100%', height:220, objectFit:'cover', borderRadius:8}}/>
-                <p style={{fontWeight:'bold', marginTop:8}}>{c.name}</p>
-              </div>
+              <label key={c.id} style={{display:'flex', alignItems:'center', gap:15, border: selections[pos]===c.id? '2px solid #0d5c5c' : '1px solid #ddd', padding:'12px 15px', borderRadius:10, cursor:'pointer', background: selections[pos]===c.id? '#f0ffff':'#fff'}}>
+                <input type="radio" name={pos} value={c.id} checked={selections[pos]===c.id} onChange={()=>setSelections({...selections, [pos]:c.id})} style={{width:22, height:22, accentColor:'#0d5c5c'}} />
+                <img src={c.photo} alt={c.name} style={{width:60, height:60, objectFit:'cover', borderRadius:50}}/>
+                <span style={{fontWeight:'bold'}}>{c.name}</span>
+                {selections[pos]===c.id && <span style={{marginLeft:'auto', color:'#0d5c5c', fontWeight:'bold'}}>✓ Selected</span>}
+              </label>
             ))}
           </div>
         </div>
       ))}
-      <button onClick={handleSubmitAll} style={{marginTop:40, padding:15, width:'100%', background:'#000', color:'#fff', fontSize:18}}>SUBMIT ALL VOTES</button>
+      <button onClick={handleSubmitAll} style={{marginTop:40, padding:15, width:'100%', background:'#0d5c5c', color:'#fff', fontSize:18, fontWeight:'bold', border:'none', borderRadius:10}}>SUBMIT ALL VOTES</button>
     </div>
   )
 }
